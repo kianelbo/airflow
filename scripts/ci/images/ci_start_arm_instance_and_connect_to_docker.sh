@@ -32,7 +32,7 @@ USER_DATA_FILE="${SCRIPTS_DIR}/self_terminate.sh"
 function start_arm_instance() {
     set -x
     mkdir -p "${WORKING_DIR}"
-    cd "${WORKING_DIR}"
+    cd "${WORKING_DIR}" || exit 1
     aws ec2 run-instances \
         --region "${REGION}" \
         --image-id "${ARM_AMI}" \
@@ -46,10 +46,9 @@ function start_arm_instance() {
 
     INSTANCE_ID=$(jq < "${INSTANCE_INFO}" ".Instances[0].InstanceId" -r)
     AVAILABILITY_ZONE=$(jq < "${INSTANCE_INFO}" ".Instances[0].Placement.AvailabilityZone" -r)
-    SECURITY_GROUP=$(jq < "${INSTANCE_INFO}" ".Instances[0].NetworkInterfaces[0].Groups[0].GroupId" -r)
 
     aws ec2 wait instance-status-ok --instance-ids "${INSTANCE_ID}"
-    INSTANCE_PUBLIC_DNS_NAME=$(aws ec2 describe-instances \
+    INSTANCE_PRIVATE_IP=$(aws ec2 describe-instances \
         --filters "Name=instance-state-name,Values=running" "Name=instance-id,Values=${INSTANCE_ID}" \
         --query 'Reservations[*].Instances[*].PublicDnsName' --output text)
     rm -f my_key
@@ -58,12 +57,10 @@ function start_arm_instance() {
         --availability-zone "${AVAILABILITY_ZONE}" \
         --instance-os-user "${EC2_USER}" \
         --ssh-public-key file://my_key.pub
-    aws ec2 authorize-security-group-ingress --region "${REGION}" --group-id "${SECURITY_GROUP}" \
-        --protocol tcp --port 22 --cidr "0.0.0.0/0" || true
     autossh -f -L12357:/var/run/docker.sock \
         -o "IdentitiesOnly=yes" -o "StrictHostKeyChecking=no" \
         -i my_key \
-        "${EC2_USER}@${INSTANCE_PUBLIC_DNS_NAME}"
+        "${EC2_USER}@${INSTANCE_PRIVATE_IP}"
     docker buildx create --name airflow_cache --append localhost:12357
     docker buildx ls
 }
